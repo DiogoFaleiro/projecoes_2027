@@ -5,8 +5,8 @@ const SUPABASE_URL = "https://xlqmkfgiadahxnqtqwmo.supabase.co";
 const SUPABASE_KEY = "sb_publishable_R-kMSvuH62UkR3sVWK0rQg_YLbq2Xj1"; // chave pública (segura para o navegador)
 const VAPID_PUBLIC = "BM8WEwrMZVNrSJ4bwOcNvsr2lf11t4GpzLOlB5seqeIYbRbnM7DspCYqZP4rKkbiGRMTqjEo3uIgI2qBIljvbZg";
 const PESSOAS = {
-  diogo: { email: "diogo@projecoes2027.app", nome: "Diogo", emoji: "🤵" },
-  may: { email: "may@projecoes2027.app", nome: "May", emoji: "👰" },
+  diogo: { email: "diogo@projecoes2027.app", nome: "Diogo", emoji: "🤵", foto: "./img/diogo.jpg" },
+  may: { email: "may@projecoes2027.app", nome: "May", emoji: "👰", foto: "./img/may.jpg" },
 };
 const COMODOS = ["Sala", "Quarto", "Cozinha", "Banheiro", "Lavanderia", "Área externa", "Escritório", "Decoração", "Eletros", "Outros"];
 const ST_MOVEL = { pesquisando: ["🔎", "Pesquisando"], escolhido: ["⭐", "Escolhido"], comprado: ["✅", "Comprado"] };
@@ -144,7 +144,7 @@ function telaLogin(erro = "") {
     <h1 class="serif">Projeções 2027</h1>
     <p>Quem está entrando?</p>
     <div class="quem">
-      ${Object.entries(PESSOAS).map(([k, p]) => `<button data-quem="${k}" class="${quem === k ? "on" : ""}"><span>${p.emoji}</span>${p.nome}</button>`).join("")}
+      ${Object.entries(PESSOAS).map(([k, p]) => `<button data-quem="${k}" class="${quem === k ? "on" : ""}"><img class="avatar" src="${p.foto}" alt="">${p.nome}</button>`).join("")}
     </div>
     <label class="campo"><span>Código de acesso</span>
       <input id="codigo" class="inp" type="password" autocomplete="current-password" autocapitalize="characters" placeholder="••••••••"></label>
