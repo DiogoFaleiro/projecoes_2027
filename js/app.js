@@ -165,7 +165,7 @@ function telaLogin(erro = "") {
     localStorage.setItem("mayedi-quem", quem);
   };
   $("#entrar").onclick = entrar;
-  $("#codigo").onkeydown = (e) => e.key === "Enter" && entrar();
+  $("#codigo").addEventListener("keydown", (e) => { if (e.key === "Enter") entrar(); });
 }
 
 // ===== Render principal =====
