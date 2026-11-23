@@ -407,6 +407,7 @@ function vMoveis() {
     return `<div class="grupo-tit">${esc(g)}<span>${grupos[g].length} · ${brl(st)}</span></div><div class="lista-moveis">${grupos[g].map(cardMovel).join("")}</div>`;
   }).join("") : `<div class="vazio">Nada encontrado com esse filtro.</div>`);
 }
+const linkBtn = (u) => (urlOk(u) ? `<a class="abrir" href="${esc(urlOk(u))}" target="_blank" rel="noopener" data-link aria-label="Abrir na loja">🔗 Loja</a>` : "");
 function cardMovel(m) {
   const pr = Number(m.preco) || 0;
   return `<div class="item ${m.status}" data-editar="moveis" data-id="${m.id}">
@@ -415,7 +416,7 @@ function cardMovel(m) {
       <h3>${esc(m.titulo)}</h3>
       <div class="meta">${esc(m.site || "")}${m.prioridade === "alta" ? " · 🔥 prioridade" : ""}</div>
       <div class="preco">${pr ? brl(pr * (m.quantidade || 1)) : "<small>sem preço</small>"}${m.quantidade > 1 ? ` <small>(${m.quantidade}× ${brl(pr)})</small>` : ""}</div>
-      <div class="status-mini">${Object.entries(ST_MOVEL).map(([k, [e, n]]) => `<button class="${m.status === k ? "on" : ""}" data-st="moveis" data-id="${m.id}" data-v="${k}" aria-label="${n}">${e}</button>`).join("")}</div>
+      <div class="status-mini">${Object.entries(ST_MOVEL).map(([k, [e, n]]) => `<button class="${m.status === k ? "on" : ""}" data-st="moveis" data-id="${m.id}" data-v="${k}" aria-label="${n}">${e}</button>`).join("")}${linkBtn(m.url)}</div>
     </div>
   </div>`;
 }
@@ -437,6 +438,7 @@ function vLua() {
         ${d.descricao ? `<div class="desc">${esc(d.descricao)}</div>` : ""}
         <div class="linha-kv"><span>${d.dias ? d.dias + " dias" : "Custo estimado"}</span><b>${d.custo ? brl(d.custo) : "—"}</b></div>
         <div class="status-mini">${Object.entries(ST_DEST).map(([k, [e, n]]) => `<button class="${d.status === k ? "on" : ""}" data-st="destinos" data-id="${d.id}" data-v="${k}">${e} <small style="font-size:12px">${n}</small></button>`).join("")}</div>
+        ${urlOk(d.url) ? `<a class="btn bloco abrir-link" href="${esc(urlOk(d.url))}" target="_blank" rel="noopener" data-link>🔗 Abrir link</a>` : ""}
       </div>
     </div>`).join("") || `<div class="vazio">Nada nesse filtro.</div>`);
 }
@@ -535,7 +537,7 @@ function formLink(tabela, item = {}) {
       el.querySelector("#previa").innerHTML = im || s ? `<div class="previa"><div class="foto">${img(im) || (ehMovel ? "🛋️" : "🏝️")}</div><div><div class="t">${esc(t || "Sem título")}</div><div class="s">${esc(s)}</div></div></div>` : "";
     };
     mostrarPrevia();
-    const buscar = async () => {
+    const buscar = async (auto = false) => {
       const bruto = v("url").value.trim();
       const url = urlOk(bruto) || extrairUrl(bruto);
       if (!url) return toast("Cole um link válido");
@@ -549,7 +551,7 @@ function formLink(tabela, item = {}) {
           if (data.imagem) v("imagem").value = data.imagem;
           v("site").value = data.site || "";
           if (data.descricao && !v("descricao").value) v("descricao").value = data.descricao;
-          if (data.preco) v(ehMovel ? "preco" : "custo").value = fmtNum(data.preco);
+          if (data.preco && (!auto || !v(ehMovel ? "preco" : "custo").value)) v(ehMovel ? "preco" : "custo").value = fmtNum(data.preco);
           toast(data.preco ? "Informações encontradas ✨" : "Achei o produto, mas não o preço — preencha à mão");
         } else {
           v("site").value = data?.site || "";
@@ -559,7 +561,7 @@ function formLink(tabela, item = {}) {
       } catch (e) { console.error(e); toast("Não consegui ler o link agora"); }
       b.disabled = false; b.textContent = "Buscar";
     };
-    el.querySelector("[data-buscar]").onclick = buscar;
+    el.querySelector("[data-buscar]").onclick = () => buscar();
     v("url").addEventListener("paste", () => setTimeout(buscar, 50));
     el.querySelector("[data-salvar]").onclick = async (e) => {
       const titulo = v("titulo").value.trim();
@@ -575,7 +577,7 @@ function formLink(tabela, item = {}) {
       else e.target.disabled = false;
     };
     botaoExcluir(el, tabela, item.id);
-    if (novo && item.url && !item.titulo) buscar();
+    if (item.url && ((novo && !item.titulo) || (!novo && (!item.preco && !item.custo || !item.descricao)))) buscar(true);
   });
 }
 
@@ -861,6 +863,7 @@ function exportarCsv() {
 
 // ===== Eventos (delegação) =====
 document.addEventListener("click", async (e) => {
+  if (e.target.closest("a[data-link]")) return; // abre o link da loja sem abrir o formulário
   const t = e.target.closest("[data-aba],[data-a],[data-fm],[data-fl],[data-fe],[data-fp],[data-fla],[data-st],[data-pres],[data-editar]");
   if (!t || t.closest(".sheet") && !t.matches("[data-a]")) return;
   if (t.closest(".sheet") && t.matches("[data-a='notif']")) return; // tratado no formulário

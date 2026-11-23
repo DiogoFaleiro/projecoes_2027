@@ -10,10 +10,59 @@ const CORS = {
 };
 
 const UAS = [
-  "facebookexternalhit/1.1 (+http://www.facebook.com/externalhit_uatext.php)",
   "Mozilla/5.0 (Linux; Android 14; Pixel 8) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Mobile Safari/537.36",
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
 ];
+
+const brl = (n: number) => n.toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+
+// Recorta um objeto JSON a partir de "{" respeitando strings
+function objetoJson(s: string, i: number): any {
+  if (i < 0) return null;
+  let d = 0, str = false, esc = false;
+  for (let j = i; j < s.length && j < i + 200_000; j++) {
+    const c = s[j];
+    if (str) { if (esc) esc = false; else if (c === "\\") esc = true; else if (c === '"') str = false; continue; }
+    if (c === '"') str = true; else if (c === "{") d++; else if (c === "}") { d--; if (d === 0) { try { return JSON.parse(s.slice(i, j + 1)); } catch { return null; } } }
+  }
+  return null;
+}
+
+// Mercado Livre (links meli.la / páginas "social"): dados ficam nos "polycards"
+function mercadoLivre(html: string) {
+  const i = html.indexOf('"polycards":[');
+  if (i < 0) return null;
+  const card = objetoJson(html, html.indexOf("{", i));
+  const comps: any[] = card?.components || [];
+  const get = (t: string) => comps.find((c) => c.type === t)?.[t];
+  const pr = get("price");
+  const preco = Number(pr?.current_price?.value) || null;
+  const partes: string[] = [];
+  const vendedor = get("seller")?.text?.replace(/\{[^}]+\}/g, "").trim();
+  if (vendedor) partes.push(vendedor + (/cockade/.test(JSON.stringify(get("seller"))) ? " (loja oficial)" : ""));
+  const rev = get("review_compacted")?.alt_text;
+  if (rev) partes.push(rev.replace(/\.$/, ""));
+  if (pr?.previous_price?.value && preco) partes.push(`De ${brl(pr.previous_price.value)} por ${brl(preco)}${pr.discount_label?.text ? " (" + pr.discount_label.text + ")" : ""}`);
+  const inst = pr?.installments;
+  if (inst?.values) {
+    const v = Object.fromEntries(inst.values.map((x: any) => [x.key, x.price ? brl(x.price.value) : x.label?.text || ""]));
+    partes.push(inst.text.replace(/\{(\w+)\}/g, (_: string, k: string) => v[k] ?? "").replace(/\s+/g, " ").trim());
+  }
+  const frete = [].concat(get("shipping_v2") || []).map((x: any) => x?.text).filter(Boolean)[0] || get("shipping")?.text;
+  if (frete) partes.push(frete);
+  return { titulo: get("title")?.text || null, preco, descricao: partes.join(" · ") || null };
+}
+
+// Preço escrito no texto (ex.: "Geladeira X - R$ 4.278")
+const precoNoTexto = (t?: string | null) => { const m = t?.match(/R\$\s?([\d.]+(?:,\d{1,2})?)/); return m ? numero(m[1]) : null; };
+const limparTitulo = (t: string | null) => t?.replace(/\s*[-|–]\s*R\$\s?[\d.,]+\s*$/, "").trim() || null;
+const limparDescricao = (d: string | null, titulo: string | null) => {
+  if (!d) return null;
+  let x = d.replace(/^Olha o que eu encontrei!\s*/i, "");
+  if (titulo && x.startsWith(titulo)) x = x.slice(titulo.length).replace(/^\s*[-|–]\s*/, "");
+  x = x.replace(/^R\$\s?[\d.,]+\s*(no|na)\s+[\w ]+\.?$/i, "").trim();
+  return x.length > 3 ? x : null;
+};
 
 function json(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), { status, headers: { ...CORS, "Content-Type": "application/json" } });
@@ -141,10 +190,13 @@ function extrair(html: string, final: URL) {
   let imagem = m["og:image:secure_url"] || m["og:image"] || m["twitter:image"] || m["twitter:image:src"] || ld.imagem ||
     html.match(/<link[^>]+rel=["']image_src["'][^>]+href=["']([^"']+)/i)?.[1] || null;
   if (imagem) { try { imagem = new URL(decode(imagem)!, final).toString(); } catch { imagem = null; } }
-  const descricao = decode(m["og:description"] || m["twitter:description"] || m["description"] || ld.descricao)?.slice(0, 500) ?? null;
-  const preco = numero(m["product:price:amount"] || m["og:price:amount"] || m["price"] || m["product:sale_price:amount"]) ?? ld.preco ?? null;
+  const descBruta = decode(m["og:description"] || m["twitter:description"] || m["description"] || ld.descricao);
+  const ml = /mercadoli[vb]re|meli\.la/i.test(final.hostname) ? mercadoLivre(html) : null;
+  const tituloLimpo = limparTitulo(ml?.titulo || titulo);
+  const preco = ml?.preco ?? numero(m["product:price:amount"] || m["og:price:amount"] || m["price"] || m["product:sale_price:amount"]) ?? ld.preco ?? precoNoTexto(titulo) ?? precoNoTexto(descBruta) ?? null;
+  const descricao = (ml?.descricao || limparDescricao(descBruta, tituloLimpo))?.slice(0, 600) ?? null;
   const site = decode(m["og:site_name"]) || final.hostname.replace(/^www\./, "");
-  return { titulo, imagem, descricao, preco, site, url: final.toString() };
+  return { titulo: tituloLimpo, imagem, descricao, preco, site, url: final.toString() };
 }
 
 Deno.serve(async (req) => {
@@ -165,9 +217,9 @@ Deno.serve(async (req) => {
     const pag = await baixar(alvo, ua);
     if (!pag) continue;
     const dados = extrair(pag.html, pag.final);
-    const nota = (d: typeof dados) => (d.titulo ? 1 : 0) + (d.imagem ? 1 : 0) + (d.preco ? 2 : 0);
+    const nota = (d: typeof dados) => (d.titulo ? 1 : 0) + (d.imagem ? 1 : 0) + (d.preco ? 2 : 0) + (d.descricao ? 1 : 0);
     if (!melhor || nota(dados) > nota(melhor)) melhor = dados;
-    if (melhor.titulo && melhor.imagem && melhor.preco) break;
+    if (melhor.titulo && melhor.imagem && melhor.preco && melhor.descricao) break;
   }
   if (!melhor) return json({ ok: false, url: alvo.toString(), site: alvo.hostname.replace(/^www\./, "") });
   return json({ ok: true, ...melhor });
