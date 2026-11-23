@@ -65,15 +65,20 @@ const $ = (s, el = document) => el.querySelector(s);
 const esc = (v) => String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const urlOk = (u) => { try { const x = new URL(u); return ["http:", "https:"].includes(x.protocol) ? x.toString() : null; } catch { return null; } };
 const brl = (n) => (Number(n) || 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL", maximumFractionDigits: (Number(n) || 0) % 1 ? 2 : 0 });
+// Lê valores no formato brasileiro: "4.278", "4.278,00", "4278", "4278,5", "1.234.567,89"
 const num = (v) => {
   if (v == null || v === "") return null;
+  if (typeof v === "number") return isFinite(v) ? v : null;
   let s = String(v).replace(/[^\d.,]/g, "");
   if (!s) return null;
-  if (s.includes(",")) s = s.replace(/\./g, "").replace(",", ".");
+  if (s.includes(",")) s = s.replace(/\./g, "").replace(",", ".");            // vírgula = decimal
+  else if (/^\d{1,3}(\.\d{3})+$/.test(s)) s = s.replace(/\./g, "");           // só pontos de milhar
   const n = parseFloat(s);
   return isFinite(n) ? n : null;
 };
-const fmtNum = (n) => (n == null ? "" : Number(n).toLocaleString("pt-BR", { minimumFractionDigits: 0, maximumFractionDigits: 2 }));
+// Valores em dinheiro sempre com 2 casas ("4.278,00") para não haver ambiguidade
+const fmtCurto = (n) => (n == null || n === "" ? "" : Number(n).toLocaleString("pt-BR", { maximumFractionDigits: 2 }));
+const fmtNum = (n) => (n == null || n === "" ? "" : Number(n).toLocaleString("pt-BR", { minimumFractionDigits: 2, maximumFractionDigits: 2 }));
 const dias = (d) => { if (!d) return null; const a = new Date(d + "T00:00:00"); const h = new Date(); h.setHours(0, 0, 0, 0); return Math.round((a - h) / 864e5); };
 const dataBR = (d) => (d ? new Date(d + "T00:00:00").toLocaleDateString("pt-BR", { day: "2-digit", month: "long", year: "numeric" }) : "");
 const iniciais = (n) => n.trim().split(/\s+/).slice(0, 2).map((p) => p[0]).join("").toUpperCase();
@@ -783,9 +788,9 @@ function formCalc() {
     const parametros = () => {
       if (k.tipo === "buffet") return `
         <div class="grade3">
-          <label class="campo"><span>R$ adulto</span><input class="inp" data-k="buffet.a" inputmode="decimal" value="${fmtNum(k.buffet.a)}"></label>
-          <label class="campo"><span>R$ criança</span><input class="inp" data-k="buffet.c" inputmode="decimal" value="${fmtNum(k.buffet.c)}"></label>
-          <label class="campo"><span>Taxa %</span><input class="inp" data-k="buffet.taxa" inputmode="decimal" value="${fmtNum(k.buffet.taxa)}"></label>
+          <label class="campo"><span>R$ adulto</span><input class="inp" data-k="buffet.a" inputmode="decimal" value="${fmtCurto(k.buffet.a)}"></label>
+          <label class="campo"><span>R$ criança</span><input class="inp" data-k="buffet.c" inputmode="decimal" value="${fmtCurto(k.buffet.c)}"></label>
+          <label class="campo"><span>Taxa %</span><input class="inp" data-k="buffet.taxa" inputmode="decimal" value="${fmtCurto(k.buffet.taxa)}"></label>
         </div>`;
       const cfg = k[k.tipo];
       return `<div class="tabela-calc">
@@ -793,8 +798,8 @@ function formCalc() {
         ${cfg.itens.map((it, i) => `<div class="tc-lin"><span>${esc(it.n)}</span>
           <label><input class="inp" data-k="${k.tipo}.itens.${i}.a" inputmode="numeric" value="${it.a}"><em>${it.u}</em></label>
           <label><input class="inp" data-k="${k.tipo}.itens.${i}.c" inputmode="numeric" value="${it.c}"><em>${it.u}</em></label>
-          <label><input class="inp" data-k="${k.tipo}.itens.${i}.p" inputmode="decimal" value="${fmtNum(it.p)}"></label></div>`).join("")}
-        <div class="tc-lin"><span>Fixos (carvão, gelo, descartáveis)</span><span></span><span></span><label><input class="inp" data-k="${k.tipo}.fixos" inputmode="decimal" value="${fmtNum(cfg.fixos)}"></label></div>
+          <label><input class="inp" data-k="${k.tipo}.itens.${i}.p" inputmode="decimal" value="${fmtCurto(it.p)}"></label></div>`).join("")}
+        <div class="tc-lin"><span>Fixos (carvão, gelo, descartáveis)</span><span></span><span></span><label><input class="inp" data-k="${k.tipo}.fixos" inputmode="decimal" value="${fmtCurto(cfg.fixos)}"></label></div>
       </div>
       <label class="campo" style="margin-top:12px"><span>Margem de segurança (%) — para não faltar</span><input class="inp" data-k="margem" inputmode="numeric" value="${k.margem}"></label>`;
     };

@@ -1,5 +1,5 @@
 // Service worker do Mayedi: cache do app + notificações push
-const CACHE = "mayedi-v5";
+const CACHE = "mayedi-v6";
 const ARQUIVOS = ["./", "./index.html", "./css/app.css", "./js/app.js", "./manifest.webmanifest", "./icons/icon-192.png", "./icons/badge-96.png", "./img/diogo.jpg", "./img/may.jpg"];
 
 self.addEventListener("install", (e) => {
