@@ -14,6 +14,38 @@ const ST_DEST = { ideia: ["💭", "Ideia"], favorito: ["❤️", "Favorito"], de
 const LADO = { noivo: "Noivo", noiva: "Noiva", ambos: "Ambos" };
 const EVENTO = { cha: "Chá de panela", casamento: "Casamento", ambos: "Chá + Casamento" };
 const PRES = { sim: ["✓", "Confirmou"], pendente: ["?", "Pendente"], nao: ["✗", "Não vai"] };
+const CATEGORIAS = {
+  "Vestido da noiva": "👗", "Traje do noivo": "🤵", "Decoração": "💐", "Fotos e vídeo": "📸", "Gráfica / Convites": "✉️",
+  "Chá de panela": "🫖", "Buffet / Comida": "🍽️", "Bolo e doces": "🎂", "Local / Espaço": "🏛️", "Música / DJ": "🎶",
+  "Alianças": "💍", "Beleza": "💄", "Lembrancinhas": "🎁", "Cartório / Documentos": "📜", "Outros": "📦",
+};
+// Médias de referência (peso de compra por pessoa). Ajustáveis na calculadora.
+const CALC_PADRAO = {
+  evento: "cha", base: "semNao", margem: 10, extraA: 0, extraC: 0, tipo: "churrasco", refeicao: "Almoço",
+  churrasco: {
+    fixos: 150,
+    itens: [
+      { n: "Carnes (boi, porco, frango)", u: "g", a: 400, c: 200, p: 45 },
+      { n: "Linguiça e pão de alho", u: "g", a: 100, c: 50, p: 28 },
+      { n: "Arroz, farofa e vinagrete", u: "g", a: 250, c: 150, p: 12 },
+      { n: "Bebidas (refri, suco, água)", u: "ml", a: 1000, c: 600, p: 5 },
+      { n: "Sobremesa", u: "g", a: 100, c: 80, p: 30 },
+    ],
+  },
+  caseiro: {
+    fixos: 100,
+    itens: [
+      { n: "Arroz (cru)", u: "g", a: 80, c: 40, p: 6 },
+      { n: "Feijão (cru)", u: "g", a: 50, c: 25, p: 9 },
+      { n: "Carne ou frango (cru)", u: "g", a: 250, c: 120, p: 35 },
+      { n: "Massa / lasanha", u: "g", a: 150, c: 80, p: 25 },
+      { n: "Salada", u: "g", a: 100, c: 50, p: 12 },
+      { n: "Bebidas (refri, suco, água)", u: "ml", a: 1000, c: 600, p: 5 },
+      { n: "Sobremesa", u: "g", a: 100, c: 80, p: 30 },
+    ],
+  },
+  buffet: { a: 70, c: 35, taxa: 10 },
+};
 
 const sb = createClient(SUPABASE_URL, SUPABASE_KEY, {
   db: { schema: "casorio" },
@@ -22,7 +54,7 @@ const sb = createClient(SUPABASE_URL, SUPABASE_KEY, {
 
 // ===== Estado =====
 const S = {
-  user: null, nome: "", config: {}, moveis: [], destinos: [], convidados: [],
+  user: null, nome: "", config: {}, moveis: [], destinos: [], convidados: [], gastos: [],
   aba: "painel",
   f: { moveis: "todos", lua: "todos", evento: "todos", presenca: "todos", lado: "todos", busca: "" },
   installPrompt: null, compartilhado: null, canal: null,
@@ -104,7 +136,7 @@ async function carregar(tabela) {
 async function carregarTudo() {
   const [{ data: cfg }] = await Promise.all([
     sb.from("config").select("*").eq("id", 1).maybeSingle(),
-    carregar("moveis"), carregar("destinos"), carregar("convidados"),
+    carregar("moveis"), carregar("destinos"), carregar("convidados"), carregar("gastos"),
   ]);
   S.config = cfg || {};
 }
@@ -117,7 +149,7 @@ function tempoReal() {
     if (!$(".sheet-bg")) render();
   }, 250); };
   S.canal = sb.channel("casorio");
-  for (const t of ["moveis", "destinos", "convidados", "config"]) {
+  for (const t of ["moveis", "destinos", "convidados", "gastos", "config"]) {
     S.canal.on("postgres_changes", { event: "*", schema: "casorio", table: t }, () => agendar(t));
   }
   S.canal.subscribe();
@@ -171,11 +203,11 @@ function telaLogin(erro = "") {
 // ===== Render principal =====
 function render() {
   if (!S.user) return telaLogin();
-  const abas = [["painel", "💜", "Painel"], ["moveis", "🛋️", "Móveis"], ["lua", "✈️", "Lua de mel"], ["convidados", "💌", "Convidados"]];
-  const titulo = { painel: "Diogo & Maynara", moveis: "Nossa casa", lua: "Lua de mel", convidados: "Convidados" }[S.aba];
-  const sub = { painel: subtituloPainel(), moveis: `${S.moveis.length} itens na lista`, lua: `${S.destinos.length} destinos`, convidados: `${totPessoas(S.convidados)} pessoas no total` }[S.aba];
+  const abas = [["painel", "💜", "Painel"], ["gastos", "💰", "Gastos"], ["moveis", "🛋️", "Móveis"], ["lua", "✈️", "Lua de mel"], ["convidados", "💌", "Convidados"]];
+  const titulo = { painel: "Diogo & Maynara", gastos: "Casamento", moveis: "Nossa casa", lua: "Lua de mel", convidados: "Convidados" }[S.aba];
+  const sub = { painel: subtituloPainel(), gastos: `${S.gastos.length} gastos · ${brl(somaG("previsto"))} previsto`, moveis: `${S.moveis.length} itens na lista`, lua: `${S.destinos.length} destinos`, convidados: `${totPessoas(S.convidados)} pessoas no total` }[S.aba];
   const semNotif = "Notification" in window && Notification.permission !== "granted";
-  const corpo = { painel: vPainel, moveis: vMoveis, lua: vLua, convidados: vConvidados }[S.aba]();
+  const corpo = { painel: vPainel, gastos: vGastos, moveis: vMoveis, lua: vLua, convidados: vConvidados }[S.aba]();
   const y = window.scrollY;
   $("#app").innerHTML = `
     <header class="topo">
@@ -194,7 +226,9 @@ function subtituloPainel() {
   if (d === 0) return "É hoje! 💍";
   return "Casados! 💍";
 }
-const totPessoas = (l) => l.reduce((s, c) => s + 1 + (c.acompanhantes || 0), 0);
+const pessoasDe = (c) => 1 + (c.acompanhantes || 0) + (c.criancas || 0);
+const totPessoas = (l) => l.reduce((s, c) => s + pessoasDe(c), 0);
+const somaG = (campo, l = S.gastos) => l.reduce((s, g) => s + (Number(g[campo]) || 0), 0);
 const doEvento = (ev) => S.convidados.filter((c) => c.evento === ev || c.evento === "ambos");
 
 // ===== Painel =====
@@ -206,6 +240,10 @@ function vPainel() {
     const leg = d == null ? "Toque para definir a data" : d > 0 ? `dias · ${dataBR(data)}` : dataBR(data);
     return `<div class="card grad contagem" data-a="config"><small>${rot}</small><div class="num">${n}</div><small>${leg}</small></div>`;
   };
+  const editar = (campo) => `<button class="btn peq editar-orc" data-a="orc" data-campo="${campo}">✏️ Orçamento</button>`;
+  // Casamento (gastos)
+  const gPrev = somaG("previsto"), gPago = somaG("pago");
+  const orcCas = Number(c.orcamento_casamento) || 0;
   // Móveis
   const tot = (st) => S.moveis.filter((m) => !st || m.status === st).reduce((s, m) => s + (Number(m.preco) || 0) * (m.quantidade || 1), 0);
   const comprado = tot("comprado"), escolhido = tot("escolhido"), pesquisando = tot("pesquisando"), total = comprado + escolhido + pesquisando;
@@ -217,14 +255,29 @@ function vPainel() {
   const decidido = S.destinos.find((d) => d.status === "decidido");
   const favs = S.destinos.filter((d) => d.status === "favorito");
   const orcLua = Number(c.orcamento_lua) || 0;
+  const luaPrev = Number(decidido?.custo) || 0;
+  // Total geral
+  const areas = [
+    ["💰 Casamento", gPrev, gPago, "#ffffff", "gastos"],
+    ["🛋️ Móveis", total, comprado, "#93c5fd", "moveis"],
+    ["✈️ Lua de mel", luaPrev, 0, "#fda4af", "lua"],
+  ];
+  const totalGeral = areas.reduce((s, a) => s + a[1], 0);
+  const pagoGeral = areas.reduce((s, a) => s + a[2], 0);
+  const orcGeral = orcCas + orc + orcLua;
+  const baseG = Math.max(totalGeral, 1);
+  // Próximos pagamentos
+  const proximos = S.gastos.filter((g) => g.vencimento && Number(g.pago) < Number(g.previsto) && dias(g.vencimento) >= -30)
+    .sort((a, b) => a.vencimento.localeCompare(b.vencimento)).slice(0, 3);
   // Convidados
   const blocoEv = (ev) => {
     const l = doEvento(ev);
-    const p = (st) => l.filter((x) => x.presenca === st).reduce((s, x) => s + 1 + (x.acompanhantes || 0), 0);
+    const p = (st) => totPessoas(l.filter((x) => x.presenca === st));
     const tt = totPessoas(l) || 0;
+    const kids = l.reduce((s, x) => s + (x.criancas || 0), 0);
     const w = (v) => (tt ? ((v / tt) * 100).toFixed(1) : 0);
     return `<div class="card" data-aba="convidados" data-ev="${ev}">
-      <div class="secao-tit" style="margin:0 0 4px"><h2>${ev === "cha" ? "🫖 Chá de panela" : "💍 Casamento"}</h2><span>${tt} pessoas</span></div>
+      <div class="secao-tit" style="margin:0 0 4px"><h2>${ev === "cha" ? "🫖 Chá de panela" : "💍 Casamento"}</h2><span>${tt} pessoas${kids ? ` · ${kids} crianças` : ""}</span></div>
       <div class="barra"><i class="b1" style="width:${w(p("sim"))}%"></i><i class="b2" style="width:${w(p("pendente"))}%"></i><i class="b3" style="width:${w(p("nao"))}%"></i></div>
       <div class="legenda"><span><em style="background:var(--verde)"></em>${p("sim")} confirmados</span><span><em style="background:var(--amarelo)"></em>${p("pendente")} pendentes</span><span><em style="background:#6b6a8a"></em>${p("nao")} não vão</span></div>
     </div>`;
@@ -242,6 +295,33 @@ function vPainel() {
     ${avisos}
     <div class="grade2" style="margin-top:${avisos ? 12 : 0}px">${contagem("🫖 Chá de panela", c.data_cha)}${contagem("💍 Casamento", c.data_casamento)}</div>
 
+    <div class="secao-tit"><h2>📊 Total geral</h2><span>${orcGeral ? "orçamento " + brl(orcGeral) : ""}</span></div>
+    <div class="card grad">
+      <div class="kpi"><small>Custo previsto de tudo</small><strong style="font-size:30px">${brl(totalGeral)}</strong></div>
+      <div class="grade2" style="margin-top:10px">
+        <div class="kpi"><small>Já pago</small><strong style="font-size:18px">${brl(pagoGeral)}</strong></div>
+        <div class="kpi"><small>Falta pagar</small><strong style="font-size:18px">${brl(totalGeral - pagoGeral)}</strong></div>
+      </div>
+      <div class="barra" style="background:rgba(255,255,255,.2)">${areas.map((a) => `<i style="width:${((a[1] / baseG) * 100).toFixed(1)}%;background:${a[3]};border-right:2px solid rgba(0,0,0,.25)"></i>`).join("")}</div>
+      ${areas.map((a) => `<div class="linha-kv" style="border-color:rgba(255,255,255,.2)" data-aba="${a[4]}"><span style="color:rgba(255,255,255,.85)"><em class="pontinho" style="background:${a[3]}"></em>${a[0]}</span><b>${brl(a[1])}</b></div>`).join("")}
+      ${orcGeral && totalGeral > orcGeral ? `<div class="mini" style="color:#fff;margin-top:8px">⚠️ ${brl(totalGeral - orcGeral)} acima da soma dos orçamentos.</div>` : ""}
+      ${!decidido && S.destinos.length ? `<div class="mini" style="color:rgba(255,255,255,.8);margin-top:6px">A lua de mel entra no total quando um destino for marcado como Decidido.</div>` : ""}
+    </div>
+
+    <div class="secao-tit"><h2>💰 Casamento</h2><span>${S.gastos.length} gastos</span></div>
+    <div class="card" data-aba="gastos">
+      <div class="grade3">
+        <div class="kpi"><small>Orçamento</small><strong style="font-size:17px">${orcCas ? brl(orcCas) : "—"}</strong></div>
+        <div class="kpi"><small>Previsto</small><strong style="font-size:17px">${brl(gPrev)}</strong></div>
+        <div class="kpi"><small>Pago</small><strong style="font-size:17px;color:#6ee79a">${brl(gPago)}</strong></div>
+      </div>
+      <div class="barra"><i class="b1" style="width:${(Math.min(1, gPago / Math.max(gPrev, orcCas, 1)) * 100).toFixed(1)}%"></i><i class="b2" style="width:${(Math.min(1, Math.max(0, gPrev - gPago) / Math.max(gPrev, orcCas, 1)) * 100).toFixed(1)}%"></i></div>
+      <div class="legenda"><span><em style="background:var(--verde)"></em>Pago</span><span><em style="background:var(--amarelo)"></em>Falta pagar ${brl(Math.max(0, gPrev - gPago))}</span></div>
+      ${orcCas && gPrev > orcCas ? `<div class="mini" style="color:#ff8b9b;margin-top:8px">⚠️ Previsto passa do orçamento em ${brl(gPrev - orcCas)}.</div>` : ""}
+      ${proximos.length ? `<div style="margin-top:10px">${proximos.map((g) => { const d = dias(g.vencimento); return `<div class="linha-kv"><span>${d < 0 ? "⚠️ Venceu" : d === 0 ? "📅 Hoje" : "📅 " + new Date(g.vencimento + "T00:00").toLocaleDateString("pt-BR", { day: "2-digit", month: "short" })} · ${esc(g.titulo)}</span><b>${brl(g.previsto - g.pago)}</b></div>`; }).join("")}</div>` : ""}
+      <div class="acoes-card">${editar("orcamento_casamento")}<button class="btn peq" data-a="calc">🍽️ Calcular comida</button></div>
+    </div>
+
     <div class="secao-tit"><h2>🛋️ Móveis</h2><span>${nComp} de ${S.moveis.length} comprados</span></div>
     <div class="card" data-aba="moveis">
       <div class="grade3">
@@ -252,6 +332,7 @@ function vPainel() {
       <div class="barra"><i class="b1" style="width:${pct(comprado)}%"></i><i class="b2" style="width:${pct(escolhido)}%"></i><i class="b3" style="width:${pct(pesquisando)}%"></i></div>
       <div class="legenda"><span><em style="background:var(--verde)"></em>Comprado</span><span><em style="background:var(--amarelo)"></em>Escolhido ${brl(escolhido)}</span><span><em style="background:#6b6a8a"></em>Pesquisando ${brl(pesquisando)}</span></div>
       ${orc && total > orc ? `<div class="mini" style="color:#ff8b9b;margin-top:8px">⚠️ A lista completa (${brl(total)}) passa do orçamento em ${brl(total - orc)}.</div>` : ""}
+      <div class="acoes-card">${editar("orcamento_moveis")}</div>
     </div>
 
     <div class="secao-tit"><h2>✈️ Lua de mel</h2><span>${S.destinos.length} destinos</span></div>
@@ -261,11 +342,53 @@ function vPainel() {
         : `<div class="linha-kv"><span>Favoritos</span><b>${favs.length ? esc(favs.map((f) => f.titulo).slice(0, 2).join(", ")) + (favs.length > 2 ? "…" : "") : "nenhum ainda"}</b></div>`}
       <div class="linha-kv"><span>Orçamento</span><b>${orcLua ? brl(orcLua) : "—"}</b></div>
       ${orcLua && decidido?.custo ? `<div class="barra"><i class="bg" style="width:${Math.min(100, (decidido.custo / orcLua) * 100)}%"></i></div><div class="mini">${decidido.custo > orcLua ? "⚠️ Acima do orçamento em " + brl(decidido.custo - orcLua) : "Dentro do orçamento · sobra " + brl(orcLua - decidido.custo)}</div>` : ""}
+      <div class="acoes-card">${editar("orcamento_lua")}</div>
     </div>
 
     <div class="secao-tit"><h2>💌 Convidados</h2><span>${S.convidados.length} convites</span></div>
     ${blocoEv("cha")}${blocoEv("casamento")}
   `;
+}
+
+// ===== Gastos do casamento =====
+function vGastos() {
+  const c = S.config;
+  const gPrev = somaG("previsto"), gPago = somaG("pago");
+  const orcCas = Number(c.orcamento_casamento) || 0;
+  const usadas = new Set(S.gastos.map((g) => g.categoria));
+  const sugestoes = Object.keys(CATEGORIAS).filter((k) => !usadas.has(k) && k !== "Outros");
+  const topo = `
+    <div class="card grad">
+      <div class="grade2">
+        <div class="kpi"><small>Previsto</small><strong>${brl(gPrev)}</strong></div>
+        <div class="kpi"><small>Orçamento</small><strong>${orcCas ? brl(orcCas) : "—"}</strong></div>
+        <div class="kpi" style="margin-top:8px"><small>Pago</small><strong>${brl(gPago)}</strong></div>
+        <div class="kpi" style="margin-top:8px"><small>Falta pagar</small><strong>${brl(Math.max(0, gPrev - gPago))}</strong></div>
+      </div>
+      <div class="barra" style="background:rgba(255,255,255,.2)"><i style="background:#fff;width:${gPrev ? ((Math.min(gPago, gPrev) / gPrev) * 100).toFixed(1) : 0}%"></i></div>
+      ${orcCas ? `<div class="mini" style="color:rgba(255,255,255,.9)">${gPrev > orcCas ? "⚠️ Previsto passa do orçamento em " + brl(gPrev - orcCas) : "Sobra do orçamento: " + brl(orcCas - gPrev)}</div>` : ""}
+      <div class="acoes-card"><button class="btn peq" style="background:rgba(0,0,0,.25)" data-a="orc" data-campo="orcamento_casamento">✏️ Orçamento</button></div>
+    </div>
+    <div class="card vidro aviso" data-a="calc" style="margin-top:12px;cursor:pointer"><div class="emo">🍽️</div><div class="txt"><b>Calculadora de comida</b>Churrasco, almoço/jantar caseiro ou buffet — por adultos e crianças.</div><span style="font-size:22px">›</span></div>
+    ${sugestoes.length ? `<div class="grupo-tit">Adicionar rápido<span>toque para criar</span></div><div class="chips">${sugestoes.map((k) => `<button class="chip" data-a="sugestao" data-cat="${esc(k)}">${CATEGORIAS[k]} ${esc(k)}</button>`).join("")}</div>` : ""}`;
+  if (!S.gastos.length) return topo + `<div class="vazio"><span class="emo">💰</span>Nenhum gasto ainda.<br>Toque numa sugestão acima ou no <b>+</b>.</div>`;
+  const grupos = {};
+  for (const g of S.gastos) (grupos[g.categoria] ||= []).push(g);
+  const ordem = Object.keys(grupos).sort((a, b) => { const ks = Object.keys(CATEGORIAS); return (ks.indexOf(a) < 0 ? 99 : ks.indexOf(a)) - (ks.indexOf(b) < 0 ? 99 : ks.indexOf(b)); });
+  return topo + ordem.map((cat) => `
+    <div class="grupo-tit">${CATEGORIAS[cat] || "📦"} ${esc(cat)}<span>${brl(somaG("pago", grupos[cat]))} de ${brl(somaG("previsto", grupos[cat]))}</span></div>
+    ${grupos[cat].map((g) => {
+      const prev = Number(g.previsto) || 0, pago = Number(g.pago) || 0, quit = prev > 0 && pago >= prev;
+      const d = g.vencimento && !quit ? dias(g.vencimento) : null;
+      return `<div class="gasto ${quit ? "quitado" : ""}" data-editar="gastos" data-id="${g.id}">
+        <div class="corpo">
+          <div class="nome">${esc(g.titulo)}</div>
+          <div class="meta">${esc(g.fornecedor || "")}${g.fornecedor && d != null ? " · " : ""}${d != null ? (d < 0 ? "⚠️ venceu " : "📅 ") + new Date(g.vencimento + "T00:00").toLocaleDateString("pt-BR", { day: "2-digit", month: "short" }) : ""}</div>
+          <div class="barra fina"><i class="b1" style="width:${prev ? Math.min(100, (pago / prev) * 100).toFixed(1) : 0}%"></i></div>
+        </div>
+        <div class="valores"><b>${brl(prev)}</b><small>${quit ? "✅ quitado" : "pago " + brl(pago)}</small></div>
+      </div>`;
+    }).join("")}`).join("");
 }
 
 // ===== Móveis =====
@@ -323,7 +446,7 @@ function vConvidados() {
   const { evento, presenca, lado } = S.f, b = S.f.busca.toLowerCase();
   const base = evento === "todos" ? S.convidados : doEvento(evento);
   const l = base.filter((c) => (presenca === "todos" || c.presenca === presenca) && (lado === "todos" || c.lado === lado) && (!b || c.nome.toLowerCase().includes(b)));
-  const pess = (st) => base.filter((c) => c.presenca === st).reduce((s, c) => s + 1 + (c.acompanhantes || 0), 0);
+  const pess = (st) => totPessoas(base.filter((c) => c.presenca === st));
   const chipsEv = `<div class="chips">${[["todos", "Todos"], ["cha", "🫖 Chá"], ["casamento", "💍 Casamento"]].map(([k, n]) => `<button class="chip ${evento === k ? "on" : ""}" data-fe="${k}">${n}</button>`).join("")}</div>`;
   const resumo = `<div class="grade3" style="margin:12px 0">
     ${[["sim", "Confirmados", "#6ee79a"], ["pendente", "Pendentes", "#ffd27a"], ["nao", "Não vão", "#ff8b9b"]].map(([k, n, cor]) => `<button class="card kpi ${presenca === k ? "vidro" : ""}" style="text-align:left;padding:12px" data-fp="${presenca === k ? "todos" : k}"><small>${n}</small><strong style="color:${cor}">${pess(k)}</strong></button>`).join("")}
@@ -336,7 +459,7 @@ function vConvidados() {
     <div class="conv" data-editar="convidados" data-id="${c.id}">
       <div class="av ${c.lado}">${esc(iniciais(c.nome))}</div>
       <div class="corpo">
-        <div class="nome">${esc(c.nome)}${c.acompanhantes ? ` <span class="mini">+${c.acompanhantes}</span>` : ""}</div>
+        <div class="nome">${esc(c.nome)}${c.acompanhantes ? ` <span class="mini">+${c.acompanhantes}</span>` : ""}${c.criancas ? ` <span class="mini">· ${c.criancas} 🧒</span>` : ""}</div>
         <div class="meta">${LADO[c.lado]} · ${EVENTO[c.evento]}</div>
       </div>
       <div class="presenca">${Object.entries(PRES).map(([k, [s, n]]) => `<button class="${k} ${c.presenca === k ? "on" : ""}" data-pres="${k}" data-id="${c.id}" aria-label="${n}">${s}</button>`).join("")}</div>
@@ -463,8 +586,12 @@ function formConvidado(c = {}) {
     <label class="campo"><span>Nome</span><input class="inp" name="nome" value="${esc(c.nome)}" placeholder="Ex.: Tia Lúcia" autocomplete="off"></label>
     <label class="campo"><span>Lado</span>${opcoes("lado", { noivo: "🤵 Noivo", noiva: "👰 Noiva", ambos: "💜 Ambos" }, c.lado || "ambos")}</label>
     <label class="campo"><span>Evento</span>${opcoes("evento", { cha: "🫖 Chá", casamento: "💍 Casamento", ambos: "Os dois" }, c.evento || (S.f.evento !== "todos" ? S.f.evento : "casamento"))}</label>
-    <label class="campo"><span>Acompanhantes</span>
-      <div class="com-botao"><button type="button" class="btn" data-menos>−</button><input class="inp" name="acompanhantes" type="number" min="0" value="${c.acompanhantes || 0}" style="text-align:center"><button type="button" class="btn" data-mais>+</button></div></label>
+    <div class="linha2">
+      <label class="campo"><span>Acompanhantes adultos</span>
+        <div class="com-botao"><button type="button" class="btn" data-menos="acompanhantes">−</button><input class="inp" name="acompanhantes" type="number" min="0" value="${c.acompanhantes || 0}" style="text-align:center;padding:13px 4px"><button type="button" class="btn" data-mais="acompanhantes">+</button></div></label>
+      <label class="campo"><span>Crianças 🧒</span>
+        <div class="com-botao"><button type="button" class="btn" data-menos="criancas">−</button><input class="inp" name="criancas" type="number" min="0" value="${c.criancas || 0}" style="text-align:center;padding:13px 4px"><button type="button" class="btn" data-mais="criancas">+</button></div></label>
+    </div>
     <label class="campo"><span>Presença</span>${opcoes("presenca", { sim: "✓ Confirmou", pendente: "? Pendente", nao: "✗ Não vai" }, c.presenca || "pendente")}</label>
     <label class="campo"><span>Notas</span><input class="inp" name="notas" value="${esc(c.notas)}" placeholder="Telefone, restrição alimentar..."></label>
     <div class="acoes"><button class="btn prim" data-salvar>${novo ? "Adicionar" : "Salvar"}</button></div>
@@ -472,14 +599,14 @@ function formConvidado(c = {}) {
   `, (el) => {
     ligarOpcoes(el);
     const v = (n) => el.querySelector(`[name="${n}"]`);
-    el.querySelector("[data-menos]").onclick = () => (v("acompanhantes").value = Math.max(0, (+v("acompanhantes").value || 0) - 1));
-    el.querySelector("[data-mais]").onclick = () => (v("acompanhantes").value = (+v("acompanhantes").value || 0) + 1);
+    el.querySelectorAll("[data-menos]").forEach((b) => b.onclick = () => (v(b.dataset.menos).value = Math.max(0, (+v(b.dataset.menos).value || 0) - 1)));
+    el.querySelectorAll("[data-mais]").forEach((b) => b.onclick = () => (v(b.dataset.mais).value = (+v(b.dataset.mais).value || 0) + 1));
     if (novo) setTimeout(() => v("nome").focus(), 250);
     el.querySelector("[data-salvar]").onclick = async (e) => {
       const nome = v("nome").value.trim();
       if (!nome) return toast("Digite o nome");
       e.target.disabled = true;
-      const dados = { nome, lado: v("lado").value, evento: v("evento").value, presenca: v("presenca").value, acompanhantes: Math.max(0, parseInt(v("acompanhantes").value) || 0), notas: v("notas").value.trim() || null };
+      const dados = { nome, lado: v("lado").value, evento: v("evento").value, presenca: v("presenca").value, acompanhantes: Math.max(0, parseInt(v("acompanhantes").value) || 0), criancas: Math.max(0, parseInt(v("criancas").value) || 0), notas: v("notas").value.trim() || null };
       if (await salvar("convidados", dados, c.id)) { toast(novo ? "Convidado adicionado 💌" : "Salvo"); fecharSheet(); }
       else e.target.disabled = false;
     };
@@ -490,8 +617,8 @@ function formConvidado(c = {}) {
 function formVarios() {
   abrirSheet(`
     <h2>Adicionar vários</h2>
-    <label class="campo"><span>Um nome por linha (use "+2" no fim para acompanhantes)</span>
-      <textarea class="inp" name="lista" style="min-height:160px" placeholder="João Silva +1&#10;Maria Souza&#10;Família Pereira +3"></textarea></label>
+    <label class="campo"><span>Um nome por linha · "+2" = 2 adultos a mais · "2c" = 2 crianças</span>
+      <textarea class="inp" name="lista" style="min-height:160px" placeholder="João Silva +1&#10;Maria Souza&#10;Família Pereira +1 2c"></textarea></label>
     <label class="campo"><span>Lado</span>${opcoes("lado", { noivo: "🤵 Noivo", noiva: "👰 Noiva", ambos: "💜 Ambos" }, "ambos")}</label>
     <label class="campo"><span>Evento</span>${opcoes("evento", { cha: "🫖 Chá", casamento: "💍 Casamento", ambos: "Os dois" }, S.f.evento !== "todos" ? S.f.evento : "casamento")}</label>
     <div class="acoes"><button class="btn prim" data-salvar>Adicionar todos</button></div>
@@ -502,8 +629,9 @@ function formVarios() {
       const linhas = v("lista").value.split("\n").map((l) => l.trim()).filter(Boolean);
       if (!linhas.length) return toast("Digite pelo menos um nome");
       const regs = linhas.map((l) => {
-        const m = l.match(/\s*\+\s*(\d+)\s*$/);
-        return { nome: m ? l.slice(0, m.index).trim() : l, acompanhantes: m ? +m[1] : 0, lado: v("lado").value, evento: v("evento").value };
+        const ad = l.match(/\+\s*(\d+)(?!\d)(?!\s*c)/i), cr = l.match(/(\d+)\s*c\b/i);
+        const nome = l.replace(/\+\s*\d+(?!\d)(?!\s*c)/gi, "").replace(/\+?\s*\d+\s*c\b/gi, "").replace(/\s+/g, " ").trim();
+        return { nome, acompanhantes: ad ? +ad[1] : 0, criancas: cr ? +cr[1] : 0, lado: v("lado").value, evento: v("evento").value };
       }).filter((r) => r.nome);
       e.target.disabled = true;
       if (await salvar("convidados", regs)) { toast(`${regs.length} convidados adicionados 💌`); fecharSheet(); }
@@ -521,6 +649,7 @@ function formConfig() {
       <label class="campo"><span>🫖 Data do chá</span><input class="inp" type="date" name="data_cha" value="${esc(c.data_cha)}"></label>
       <label class="campo"><span>💍 Data do casamento</span><input class="inp" type="date" name="data_casamento" value="${esc(c.data_casamento)}"></label>
     </div>
+    <label class="campo"><span>Orçamento do casamento</span><input class="inp" name="orcamento_casamento" inputmode="decimal" value="${fmtNum(c.orcamento_casamento || "")}" placeholder="0,00"></label>
     <div class="linha2">
       <label class="campo"><span>Orçamento móveis</span><input class="inp" name="orcamento_moveis" inputmode="decimal" value="${fmtNum(c.orcamento_moveis || "")}" placeholder="0,00"></label>
       <label class="campo"><span>Orçamento lua de mel</span><input class="inp" name="orcamento_lua" inputmode="decimal" value="${fmtNum(c.orcamento_lua || "")}" placeholder="0,00"></label>
@@ -537,7 +666,7 @@ function formConfig() {
   `, (el) => {
     const v = (n) => el.querySelector(`[name="${n}"]`);
     el.querySelector("[data-salvar]").onclick = async () => {
-      const dados = { data_cha: v("data_cha").value || null, data_casamento: v("data_casamento").value || null, orcamento_moveis: num(v("orcamento_moveis").value) || 0, orcamento_lua: num(v("orcamento_lua").value) || 0 };
+      const dados = { data_cha: v("data_cha").value || null, data_casamento: v("data_casamento").value || null, orcamento_moveis: num(v("orcamento_moveis").value) || 0, orcamento_casamento: num(v("orcamento_casamento").value) || 0, orcamento_lua: num(v("orcamento_lua").value) || 0 };
       const { data, error } = await sb.from("config").update(dados).eq("id", 1).select().maybeSingle();
       if (error) return toast("Erro ao salvar");
       S.config = data; toast("Salvo"); fecharSheet();
@@ -549,6 +678,165 @@ function formConfig() {
       if (sub) { await sb.from("push_subs").delete().eq("endpoint", sub.endpoint); await sub.unsubscribe(); }
       await sb.auth.signOut(); $("#sheet-root").innerHTML = "";
     };
+  });
+}
+
+function formGasto(g = {}) {
+  const novo = !g.id;
+  const cat = g.categoria || "Outros";
+  abrirSheet(`
+    <h2>${novo ? "Novo gasto" : "Editar gasto"}</h2>
+    <label class="campo"><span>Categoria</span><select class="inp" name="categoria">${[...new Set([...Object.keys(CATEGORIAS), cat])].map((k) => `<option value="${esc(k)}" ${k === cat ? "selected" : ""}>${CATEGORIAS[k] || "📦"} ${esc(k)}</option>`).join("")}</select></label>
+    <label class="campo"><span>Descrição</span><input class="inp" name="titulo" value="${esc(g.titulo)}" placeholder="Ex.: Vestido + ajustes"></label>
+    <label class="campo"><span>Fornecedor (opcional)</span><input class="inp" name="fornecedor" value="${esc(g.fornecedor)}" placeholder="Ex.: Ateliê Maria, Foto Studio X"></label>
+    <div class="linha2">
+      <label class="campo"><span>Valor previsto</span><input class="inp" name="previsto" inputmode="decimal" placeholder="0,00" value="${fmtNum(g.previsto || "")}"></label>
+      <label class="campo"><span>Já pago</span><input class="inp" name="pago" inputmode="decimal" placeholder="0,00" value="${fmtNum(g.pago || "")}"></label>
+    </div>
+    <button type="button" class="btn peq" data-quitar style="margin:-4px 0 14px">✅ Marcar como quitado</button>
+    <label class="campo"><span>Próximo vencimento (opcional)</span><input class="inp" type="date" name="vencimento" value="${esc(g.vencimento)}"></label>
+    <label class="campo"><span>Notas</span><textarea class="inp" name="notas" style="min-height:60px" placeholder="Parcelas, o que está incluso, contato...">${esc(g.notas)}</textarea></label>
+    <div class="acoes"><button class="btn prim" data-salvar>${novo ? "Adicionar" : "Salvar"}</button></div>
+    ${novo ? "" : `<button class="btn perigo bloco" style="margin-top:12px" data-excluir>Excluir</button>`}
+  `, (el) => {
+    const v = (n) => el.querySelector(`[name="${n}"]`);
+    if (novo) setTimeout(() => (g.titulo ? v("previsto") : v("titulo")).focus(), 250);
+    el.querySelector("[data-quitar]").onclick = () => { v("pago").value = v("previsto").value; toast("Valor pago = previsto"); };
+    el.querySelector("[data-salvar]").onclick = async (e) => {
+      const titulo = v("titulo").value.trim();
+      if (!titulo) return toast("Descreva o gasto");
+      const dados = { categoria: v("categoria").value, titulo, fornecedor: v("fornecedor").value.trim() || null, previsto: num(v("previsto").value) || 0, pago: num(v("pago").value) || 0, vencimento: v("vencimento").value || null, notas: v("notas").value.trim() || null };
+      e.target.disabled = true;
+      if (await salvar("gastos", dados, g.id)) { toast(novo ? "Gasto adicionado 💰" : "Salvo"); fecharSheet(); }
+      else e.target.disabled = false;
+    };
+    botaoExcluir(el, "gastos", g.id);
+  });
+}
+
+const ORC_NOMES = { orcamento_casamento: "💰 Orçamento do casamento", orcamento_moveis: "🛋️ Orçamento dos móveis", orcamento_lua: "✈️ Orçamento da lua de mel" };
+function formOrcamento(campo) {
+  if (!ORC_NOMES[campo]) return;
+  abrirSheet(`
+    <h2>${ORC_NOMES[campo]}</h2>
+    <label class="campo"><span>Quanto vocês querem gastar no máximo?</span><input class="inp" name="valor" inputmode="decimal" placeholder="0,00" value="${fmtNum(S.config[campo] || "")}" style="font-size:22px;font-weight:700"></label>
+    <div class="acoes"><button class="btn prim" data-salvar>Salvar</button></div>
+  `, (el) => {
+    const inp = el.querySelector("[name=valor]");
+    setTimeout(() => inp.focus(), 250);
+    const ok = async () => {
+      const { data, error } = await sb.from("config").update({ [campo]: num(inp.value) || 0 }).eq("id", 1).select().maybeSingle();
+      if (error) return toast("Erro ao salvar");
+      S.config = data; toast("Orçamento atualizado"); fecharSheet();
+    };
+    el.querySelector("[data-salvar]").onclick = ok;
+    inp.addEventListener("keydown", (e) => { if (e.key === "Enter") ok(); });
+  });
+}
+
+// ===== Calculadora de comida =====
+function calcEstado() {
+  const c = S.config.calc || {};
+  return JSON.parse(JSON.stringify({ ...CALC_PADRAO, ...c, buffet: { ...CALC_PADRAO.buffet, ...(c.buffet || {}) }, churrasco: c.churrasco || CALC_PADRAO.churrasco, caseiro: c.caseiro || CALC_PADRAO.caseiro }));
+}
+function calcPessoas(k) {
+  let l = doEvento(k.evento);
+  if (k.base === "semNao") l = l.filter((c) => c.presenca !== "nao");
+  if (k.base === "confirmados") l = l.filter((c) => c.presenca === "sim");
+  const A = l.reduce((s, c) => s + 1 + (c.acompanhantes || 0), 0) + Math.max(0, +k.extraA || 0);
+  const C = l.reduce((s, c) => s + (c.criancas || 0), 0) + Math.max(0, +k.extraC || 0);
+  return { A, C };
+}
+function calcResultado(k) {
+  const { A, C } = calcPessoas(k);
+  if (k.tipo === "buffet") {
+    const b = k.buffet, sub = A * (+b.a || 0) + C * (+b.c || 0), taxa = sub * (+b.taxa || 0) / 100;
+    const linhas = [["Adultos", `${A} × ${brl(b.a)}`, A * (+b.a || 0)], ["Crianças", `${C} × ${brl(b.c)}`, C * (+b.c || 0)], [`Taxa de serviço (${b.taxa || 0}%)`, "", taxa]];
+    return { A, C, linhas, total: sub + taxa };
+  }
+  const m = 1 + (+k.margem || 0) / 100, cfg = k[k.tipo];
+  const linhas = cfg.itens.map((it) => {
+    const q = ((+it.a || 0) * A + (+it.c || 0) * C) * m / 1000;
+    return [it.n, `${q.toLocaleString("pt-BR", { maximumFractionDigits: 1 })} ${it.u === "ml" ? "L" : "kg"}`, q * (+it.p || 0)];
+  });
+  linhas.push(["Fixos (carvão, gelo, descartáveis...)", "", +cfg.fixos || 0]);
+  return { A, C, linhas, total: linhas.reduce((s, l) => s + l[2], 0) };
+}
+function formCalc() {
+  const k = calcEstado();
+  let salvarT;
+  const persistir = () => { clearTimeout(salvarT); salvarT = setTimeout(() => { S.config.calc = k; sb.from("config").update({ calc: k }).eq("id", 1).then(() => {}); }, 700); };
+  const TIPOS = { churrasco: "🔥 Churrasco", caseiro: "🍲 Caseiro", buffet: "🍽️ Buffet" };
+  abrirSheet(`<h2>🍽️ Calculadora de comida</h2><div id="calc"></div>`, (el) => {
+    const box = el.querySelector("#calc");
+    const resultado = () => {
+      const r = calcResultado(k);
+      const pessoas = r.A + r.C;
+      return `<div class="card grad" style="margin-top:4px">
+        <div class="kpi"><small>${esc(k.refeicao)} · ${TIPOS[k.tipo]} · ${r.A} adultos e ${r.C} crianças</small><strong style="font-size:28px">${brl(r.total)}</strong></div>
+        <div class="mini" style="color:rgba(255,255,255,.85)">${pessoas ? "≈ " + brl(r.total / pessoas) + " por pessoa" : "Sem convidados nesse filtro ainda"}</div>
+        <div style="margin-top:8px">${r.linhas.map((l) => `<div class="linha-kv" style="border-color:rgba(255,255,255,.2)"><span style="color:rgba(255,255,255,.85)">${esc(l[0])}${l[1] ? ` · <b style="color:#fff">${l[1]}</b>` : ""}</span><b>${brl(l[2])}</b></div>`).join("")}</div>
+      </div>`;
+    };
+    const parametros = () => {
+      if (k.tipo === "buffet") return `
+        <div class="grade3">
+          <label class="campo"><span>R$ adulto</span><input class="inp" data-k="buffet.a" inputmode="decimal" value="${fmtNum(k.buffet.a)}"></label>
+          <label class="campo"><span>R$ criança</span><input class="inp" data-k="buffet.c" inputmode="decimal" value="${fmtNum(k.buffet.c)}"></label>
+          <label class="campo"><span>Taxa %</span><input class="inp" data-k="buffet.taxa" inputmode="decimal" value="${fmtNum(k.buffet.taxa)}"></label>
+        </div>`;
+      const cfg = k[k.tipo];
+      return `<div class="tabela-calc">
+        <div class="tc-cab"><span>Item</span><span>Adulto</span><span>Criança</span><span>R$/kg·L</span></div>
+        ${cfg.itens.map((it, i) => `<div class="tc-lin"><span>${esc(it.n)}</span>
+          <label><input class="inp" data-k="${k.tipo}.itens.${i}.a" inputmode="numeric" value="${it.a}"><em>${it.u}</em></label>
+          <label><input class="inp" data-k="${k.tipo}.itens.${i}.c" inputmode="numeric" value="${it.c}"><em>${it.u}</em></label>
+          <label><input class="inp" data-k="${k.tipo}.itens.${i}.p" inputmode="decimal" value="${fmtNum(it.p)}"></label></div>`).join("")}
+        <div class="tc-lin"><span>Fixos (carvão, gelo, descartáveis)</span><span></span><span></span><label><input class="inp" data-k="${k.tipo}.fixos" inputmode="decimal" value="${fmtNum(cfg.fixos)}"></label></div>
+      </div>
+      <label class="campo" style="margin-top:12px"><span>Margem de segurança (%) — para não faltar</span><input class="inp" data-k="margem" inputmode="numeric" value="${k.margem}"></label>`;
+    };
+    const desenhar = () => {
+      box.innerHTML = `
+        <label class="campo"><span>Evento</span>${opcoes("evento", { cha: "🫖 Chá de panela", casamento: "💍 Casamento" }, k.evento)}</label>
+        <label class="campo"><span>Refeição</span>${opcoes("refeicao", { "Almoço": "☀️ Almoço", "Jantar": "🌙 Jantar" }, k.refeicao)}</label>
+        <label class="campo"><span>Tipo</span>${opcoes("tipo", TIPOS, k.tipo)}</label>
+        <label class="campo"><span>Quem entra na conta</span>${opcoes("base", { todos: "Todos", semNao: "Sem os 'não vão'", confirmados: "Só confirmados" }, k.base)}</label>
+        <div class="linha2">
+          <label class="campo"><span>+ Adultos extras</span><input class="inp" data-k="extraA" inputmode="numeric" value="${k.extraA || 0}"></label>
+          <label class="campo"><span>+ Crianças extras</span><input class="inp" data-k="extraC" inputmode="numeric" value="${k.extraC || 0}"></label>
+        </div>
+        <div class="mini" style="margin:-6px 2px 14px">Extras: equipe, família da casa ou quem ainda não está na lista. Crianças vêm do campo "Crianças" de cada convite.</div>
+        <div class="grupo-tit" style="margin-top:4px">Quantidades por pessoa e preços<span>médias de referência — ajuste</span></div>
+        ${parametros()}
+        <div id="calc-res">${resultado()}</div>
+        <div class="acoes" style="margin-top:14px"><button class="btn" data-restaurar>↺ Médias padrão</button><button class="btn prim" data-lancar>💰 Lançar nos gastos</button></div>`;
+      ligarOpcoes(box);
+      box.querySelectorAll("[data-grupo]").forEach((g) => g.addEventListener("click", () => { k[g.dataset.grupo] = box.querySelector(`input[name="${g.dataset.grupo}"]`).value; persistir(); desenhar(); }));
+      box.querySelectorAll("[data-k]").forEach((inp) => inp.addEventListener("input", () => {
+        const path = inp.dataset.k.split("."); let o = k;
+        for (const p of path.slice(0, -1)) o = o[p];
+        o[path.at(-1)] = num(inp.value) ?? 0;
+        box.querySelector("#calc-res").innerHTML = resultado(); persistir();
+      }));
+      box.querySelector("[data-restaurar]").onclick = () => {
+        const padrao = JSON.parse(JSON.stringify(CALC_PADRAO));
+        k.churrasco = padrao.churrasco; k.caseiro = padrao.caseiro; k.buffet = padrao.buffet; k.margem = padrao.margem;
+        persistir(); desenhar(); toast("Médias restauradas");
+      };
+      box.querySelector("[data-lancar]").onclick = async (e) => {
+        const r = calcResultado(k);
+        if (!r.total) return toast("Nada para lançar ainda");
+        const categoria = k.evento === "cha" ? "Chá de panela" : "Buffet / Comida";
+        const titulo = `${k.refeicao} ${k.evento === "cha" ? "do chá" : "do casamento"} – ${TIPOS[k.tipo].slice(3)} (${r.A} adultos, ${r.C} crianças)`;
+        const existente = S.gastos.find((g) => g.categoria === categoria && (g.notas || "").startsWith("[calculadora]"));
+        e.target.disabled = true;
+        const ok = await salvar("gastos", { categoria, titulo, previsto: Math.round(r.total * 100) / 100, notas: "[calculadora] estimativa automática — atualize ao fechar com fornecedor" }, existente?.id);
+        e.target.disabled = false;
+        if (ok) { toast(existente ? "Estimativa atualizada nos gastos 💰" : "Lançado nos gastos 💰"); S.aba = "gastos"; location.hash = "gastos"; fecharSheet(); }
+      };
+    };
+    desenhar();
   });
 }
 
@@ -564,7 +852,7 @@ function escolherDestinoCompartilhado() {
 }
 
 function exportarCsv() {
-  const linhas = [["Nome", "Lado", "Evento", "Acompanhantes", "Presença", "Notas"], ...S.convidados.map((c) => [c.nome, LADO[c.lado], EVENTO[c.evento], c.acompanhantes, PRES[c.presenca][1], c.notas || ""])];
+  const linhas = [["Nome", "Lado", "Evento", "Acompanhantes adultos", "Crianças", "Total pessoas", "Presença", "Notas"], ...S.convidados.map((c) => [c.nome, LADO[c.lado], EVENTO[c.evento], c.acompanhantes, c.criancas || 0, pessoasDe(c), PRES[c.presenca][1], c.notas || ""])];
   const csv = "﻿" + linhas.map((l) => l.map((x) => `"${String(x).replace(/"/g, '""')}"`).join(";")).join("\n");
   const a = document.createElement("a");
   a.href = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
@@ -609,7 +897,10 @@ document.addEventListener("click", async (e) => {
     case "config": return formConfig();
     case "notif": return ativarNotificacoes();
     case "instalar": if (S.installPrompt) { S.installPrompt.prompt(); await S.installPrompt.userChoice; S.installPrompt = null; render(); } return;
-    case "novo": return S.aba === "convidados" ? formConvidado() : formLink(S.aba === "moveis" ? "moveis" : "destinos");
+    case "novo": return S.aba === "convidados" ? formConvidado() : S.aba === "gastos" ? formGasto() : formLink(S.aba === "moveis" ? "moveis" : "destinos");
+    case "orc": return formOrcamento(d.campo);
+    case "calc": return formCalc();
+    case "sugestao": return formGasto({ categoria: d.cat, titulo: d.cat });
     case "varios": return formVarios();
     case "csv": return exportarCsv();
   }
@@ -623,7 +914,7 @@ document.addEventListener("input", (e) => {
 });
 window.addEventListener("hashchange", () => {
   const h = location.hash.slice(1);
-  if (["painel", "moveis", "lua", "convidados"].includes(h) && h !== S.aba) { S.aba = h; render(); }
+  if (["painel", "gastos", "moveis", "lua", "convidados"].includes(h) && h !== S.aba) { S.aba = h; render(); }
 });
 document.addEventListener("visibilitychange", async () => {
   if (document.visibilityState === "visible" && S.user) { await carregarTudo(); if (!$(".sheet-bg")) render(); }
@@ -636,7 +927,7 @@ async function entrou(session) {
   if (!m) { await sb.auth.signOut(); return telaLogin("Este usuário não tem acesso."); }
   S.nome = m.nome;
   const h = location.hash.slice(1);
-  if (["painel", "moveis", "lua", "convidados"].includes(h)) S.aba = h;
+  if (["painel", "gastos", "moveis", "lua", "convidados"].includes(h)) S.aba = h;
   await carregarTudo();
   render();
   tempoReal();

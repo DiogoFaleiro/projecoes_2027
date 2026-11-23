@@ -27,6 +27,12 @@ function mensagem(tabela: string, op: string, r: any, quem: string) {
     const p = r.presenca === "sim" ? "confirmou presença 🎉" : r.presenca === "nao" ? "não vai poder ir" : "voltou para pendente";
     return { title: "💌 Lista de convidados", body: `${r.nome} ${p}`, url: "./#convidados" };
   }
+  if (tabela === "gastos") {
+    const brl = (n: unknown) => (Number(n) || 0).toLocaleString("pt-BR", { style: "currency", currency: "BRL" });
+    if (op === "INSERT") return { title: "💰 Novo gasto do casamento", body: `${quem} adicionou ${r.titulo} (${brl(r.previsto)})`, url: "./#gastos" };
+    const quitado = Number(r.pago) >= Number(r.previsto) && Number(r.previsto) > 0;
+    return { title: quitado ? "💰 Gasto quitado ✅" : "💰 Pagamento registrado", body: `${r.titulo}: pago ${brl(r.pago)} de ${brl(r.previsto)} (por ${quem})`, url: "./#gastos" };
+  }
   return null;
 }
 

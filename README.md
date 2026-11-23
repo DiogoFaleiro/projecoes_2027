@@ -13,6 +13,7 @@ manifest.webmanifest    # PWA: instalação, atalhos e "Compartilhar → app"
 icons/
 supabase/
   migrations/001_casorio.sql   # schema "casorio" (tabelas, RLS, realtime, trigger de push)
+  migrations/002_gastos.sql    # gastos (previsto/pago), crianças nos convites, orçamento e calculadora
   functions/casorio-preview    # lê um link e devolve título, imagem, descrição e preço
   functions/casorio-push       # envia Web Push para o outro membro
 ```
@@ -24,6 +25,8 @@ supabase/
 - **Tempo real:** alterações aparecem na hora no outro celular (Supabase Realtime).
 - **Prévia de links:** a função `casorio-preview` lê as meta tags (Open Graph / JSON-LD) da página. Algumas lojas bloqueiam leitura automática; nesses casos os campos são preenchidos à mão.
 - **Notificações:** um trigger no banco chama `casorio-push` quando um item é adicionado ou muda de status/presença. As chaves VAPID e o segredo interno ficam no Supabase Vault.
+
+- **Gastos e calculadora:** gastos com valor previsto e pago por categoria; calculadora de comida (churrasco, caseiro ou buffet) usando adultos e crianças da lista, com médias ajustáveis salvas em `config.calc`.
 
 ## Publicação
 
