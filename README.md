@@ -28,6 +28,8 @@ supabase/
 
 - **Gastos e calculadora:** gastos com valor previsto e pago por categoria; calculadora de comida (churrasco, caseiro ou buffet) usando adultos e crianças da lista, com médias ajustáveis salvas em `config.calc`.
 
+- **Mercado Livre:** o ML bloqueia leitura das páginas de produto por servidores; a função `casorio-ml` conecta a API oficial (OAuth + PKCE) e a prévia usa `/items/{id}` e `/items/{id}/description`. Credenciais em *Edge Functions → Secrets*: `ML_CLIENT_ID` e `ML_CLIENT_SECRET`. Redirect URI: `https://xlqmkfgiadahxnqtqwmo.supabase.co/functions/v1/casorio-ml`.
+
 ## Publicação
 
 GitHub Pages servindo a branch `main` na raiz. Não há etapa de build.

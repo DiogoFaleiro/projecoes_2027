@@ -64,6 +64,72 @@ const limparDescricao = (d: string | null, titulo: string | null) => {
   return x.length > 3 ? x : null;
 };
 
+// ===== API oficial do Mercado Livre =====
+const ehML = (h: string) => /(^|\.)(mercadoli[vb]re\.com(\.br)?|meli\.la)$/i.test(h);
+
+function idsML(u: string) {
+  let t = u;
+  for (let i = 0; i < 3; i++) { try { const d = decodeURIComponent(t); if (d === t) break; t = d; } catch { break; } }
+  const item = t.match(/item_id[:=](MLB\d{6,})/i)?.[1] || t.match(/[?&#]wid=(MLB\d{6,})/i)?.[1] || (t.match(/\/(MLB)-?(\d{6,})(?=[-_/?#]|$)/i) ? "MLB" + t.match(/\/MLB-?(\d{6,})(?=[-_/?#]|$)/i)![1] : null);
+  const produto = t.match(/\/p\/(MLB\d{6,})/i)?.[1] || null;
+  return { item, produto };
+}
+
+async function tokenML(): Promise<string | null> {
+  const ID = Deno.env.get("ML_CLIENT_ID"), SECRET = Deno.env.get("ML_CLIENT_SECRET");
+  if (!ID || !SECRET) return null;
+  return await sql.begin(async (tx) => {
+    const [t] = await tx`select access_token, refresh_token, expira_em from casorio.ml_token where id = 1 for update`;
+    if (!t?.refresh_token && !t?.access_token) return null;
+    if (t.access_token && t.expira_em && new Date(t.expira_em).getTime() > Date.now() + 120_000) return t.access_token;
+    if (!t.refresh_token) return null;
+    const r = await fetch("https://api.mercadolibre.com/oauth/token", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded", Accept: "application/json" },
+      body: new URLSearchParams({ grant_type: "refresh_token", client_id: ID, client_secret: SECRET, refresh_token: t.refresh_token }),
+    });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok || !j.access_token) { console.error("refresh ML falhou", r.status, j); return null; }
+    await tx`update casorio.ml_token set access_token = ${j.access_token}, refresh_token = ${j.refresh_token ?? t.refresh_token},
+      expira_em = now() + make_interval(secs => ${Number(j.expires_in) || 21600}), atualizado_em = now() where id = 1`;
+    return j.access_token as string;
+  });
+}
+
+async function apiML(path: string, token: string) {
+  const r = await fetch(`https://api.mercadolibre.com${path}`, { headers: { Authorization: `Bearer ${token}`, Accept: "application/json" } });
+  if (!r.ok) { console.error("API ML", path, r.status, (await r.text()).slice(0, 200)); return null; }
+  return await r.json();
+}
+
+async function dadosML(urls: string[]) {
+  const token = await tokenML();
+  if (!token) return null;
+  let ids = { item: null as string | null, produto: null as string | null };
+  for (const u of urls) { const x = idsML(u); ids = { item: ids.item || x.item, produto: ids.produto || x.produto }; }
+  const res: { titulo?: string; preco?: number; imagem?: string; descricao?: string } = {};
+  if (ids.item) {
+    const [it, de] = await Promise.all([apiML(`/items/${ids.item}`, token), apiML(`/items/${ids.item}/description`, token)]);
+    if (it) {
+      res.titulo = it.title; res.preco = Number(it.price) || undefined;
+      res.imagem = it.pictures?.[0]?.secure_url || it.thumbnail?.replace(/^http:/, "https:");
+    }
+    const txt = (de?.plain_text || "").trim();
+    if (txt) res.descricao = txt;
+  }
+  if (ids.produto && (!res.titulo || !res.preco || !res.descricao)) {
+    const pr = await apiML(`/products/${ids.produto}`, token);
+    if (pr) {
+      res.titulo ||= pr.name;
+      res.preco ||= Number(pr.buy_box_winner?.price) || undefined;
+      res.imagem ||= pr.pictures?.[0]?.url;
+      res.descricao ||= (pr.short_description?.content || "").trim() || undefined;
+      if (!res.descricao && Array.isArray(pr.main_features)) res.descricao = pr.main_features.map((f: any) => "• " + f.text).join("\n") || undefined;
+    }
+  }
+  return res.titulo || res.preco ? res : null;
+}
+
 function json(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), { status, headers: { ...CORS, "Content-Type": "application/json" } });
 }
@@ -213,14 +279,31 @@ Deno.serve(async (req) => {
   if (!alvo) return json({ erro: "link inválido" }, 400);
 
   let melhor: ReturnType<typeof extrair> | null = null;
+  const finais: string[] = [alvo.toString()];
+  let bloqueado = false;
   for (const ua of UAS) {
     const pag = await baixar(alvo, ua);
     if (!pag) continue;
+    finais.push(pag.final.toString());
+    if (/account-verification|\/gz\/|captcha/i.test(pag.final.pathname)) { bloqueado = true; continue; }
     const dados = extrair(pag.html, pag.final);
     const nota = (d: typeof dados) => (d.titulo ? 1 : 0) + (d.imagem ? 1 : 0) + (d.preco ? 2 : 0) + (d.descricao ? 1 : 0);
     if (!melhor || nota(dados) > nota(melhor)) melhor = dados;
     if (melhor.titulo && melhor.imagem && melhor.preco && melhor.descricao) break;
   }
-  if (!melhor) return json({ ok: false, url: alvo.toString(), site: alvo.hostname.replace(/^www\./, "") });
+  // Mercado Livre: API oficial completa preço e descrição (quando conectada)
+  if (finais.some((u) => { try { return ehML(new URL(u).hostname); } catch { return false; } }) && (!melhor?.preco || !melhor?.descricao || (melhor.descricao || "").startsWith("Por "))) {
+    const api = await dadosML(finais).catch((e) => { console.error(e); return null; });
+    if (api) {
+      melhor = {
+        titulo: api.titulo || melhor?.titulo || null, imagem: api.imagem || melhor?.imagem || null,
+        descricao: (api.descricao || melhor?.descricao || null)?.slice(0, 2000) ?? null,
+        preco: api.preco ?? melhor?.preco ?? null, site: "Mercado Livre", url: alvo.toString(),
+      };
+    } else if (!melhor) {
+      return json({ ok: false, ml: true, url: alvo.toString(), site: "Mercado Livre" });
+    }
+  }
+  if (!melhor) return json({ ok: false, bloqueado, url: alvo.toString(), site: alvo.hostname.replace(/^www\./, "") });
   return json({ ok: true, ...melhor });
 });

@@ -96,6 +96,13 @@ function img(url, fallback) {
 // ===== Compartilhar (Android: "Compartilhar → Mayedi") =====
 (function lerCompartilhamento() {
   const p = new URLSearchParams(location.search);
+  const ml = p.get("ml");
+  if (ml) {
+    const msg = { ok: "Mercado Livre conectado ✅", negado: "Autorização do Mercado Livre cancelada", expirado: "A autorização expirou, tente de novo", "sem-offline": "Conectado, mas ative 'offline_access' no app do Mercado Livre", erro: "Não foi possível conectar o Mercado Livre" }[ml] || "Mercado Livre: " + ml;
+    setTimeout(() => toast(msg), 1200);
+    history.replaceState(null, "", location.pathname + location.hash);
+    return;
+  }
   if (!p.has("url") && !p.has("text") && !p.has("title")) return;
   const url = urlOk(p.get("url")) || extrairUrl(p.get("text")) || extrairUrl(p.get("title"));
   if (url) S.compartilhado = { url, titulo: p.get("title") || "" };
@@ -555,12 +562,12 @@ function formLink(tabela, item = {}) {
           if (data.titulo && (!v("titulo").value || !item.id)) v("titulo").value = data.titulo.slice(0, 160);
           if (data.imagem) v("imagem").value = data.imagem;
           v("site").value = data.site || "";
-          if (data.descricao && !v("descricao").value) v("descricao").value = data.descricao;
+          if (data.descricao && (!auto || !v("descricao").value)) v("descricao").value = data.descricao;
           if (data.preco && (!auto || !v(ehMovel ? "preco" : "custo").value)) v(ehMovel ? "preco" : "custo").value = fmtNum(data.preco);
           toast(data.preco ? "Informações encontradas ✨" : "Achei o produto, mas não o preço — preencha à mão");
         } else {
           v("site").value = data?.site || "";
-          toast("A loja bloqueou a leitura automática. Preencha à mão 🙂");
+          toast(data?.ml ? "Para puxar preço e descrição do Mercado Livre, conecte-o em ⚙️ Configurações" : "A loja bloqueou a leitura automática. Preencha à mão 🙂");
         }
         mostrarPrevia();
       } catch (e) { console.error(e); toast("Não consegui ler o link agora"); }
@@ -666,6 +673,7 @@ function formConfig() {
       <div class="linha-kv"><span>Conectado como</span><b>${esc(S.nome)}</b></div>
       <div class="linha-kv"><span>Notificações</span><b>${notif}</b></div>
     </div>
+    <div class="card" style="margin-top:12px" id="ml-box"><div class="linha-kv"><span>🛒 Mercado Livre</span><b><span class="spin"></span></b></div></div>
     <div class="acoes" style="margin-top:12px">
       ${"Notification" in window && Notification.permission !== "granted" ? '<button class="btn" data-a="notif">🔔 Ativar notificações</button>' : ""}
       <button class="btn" data-sair>Sair</button>
@@ -679,6 +687,7 @@ function formConfig() {
       S.config = data; toast("Salvo"); fecharSheet();
     };
     el.querySelector("[data-a='notif']")?.addEventListener("click", async () => { await ativarNotificacoes(); fecharSheet(); });
+    caixaML(el.querySelector("#ml-box"));
     el.querySelector("[data-sair]").onclick = async () => {
       const reg = await navigator.serviceWorker?.getRegistration();
       const sub = await reg?.pushManager?.getSubscription();
@@ -844,6 +853,23 @@ function formCalc() {
       };
     };
     desenhar();
+  });
+}
+
+async function caixaML(box) {
+  const { data, error } = await sb.functions.invoke("casorio-ml", { body: { acao: "status" } });
+  if (error || !data) { box.innerHTML = `<div class="linha-kv"><span>🛒 Mercado Livre</span><b>indisponível</b></div>`; return; }
+  const st = !data.configurado ? "⚠️ falta configurar" : data.conectado ? "Conectado ✅" : "Não conectado";
+  box.innerHTML = `<div class="linha-kv"><span>🛒 Mercado Livre</span><b>${st}</b></div>
+    <div class="mini" style="margin:6px 0 10px">${data.conectado ? "Links do Mercado Livre trazem preço e descrição completos pela API oficial." : data.configurado ? "Conecte para puxar preço e descrição dos links do Mercado Livre." : "As credenciais do app do Mercado Livre ainda não foram cadastradas no Supabase."}</div>
+    ${data.configurado ? (data.conectado ? '<button class="btn peq" data-ml="desconectar">Desconectar</button>' : '<button class="btn prim peq" data-ml="iniciar">🔗 Conectar Mercado Livre</button>') : ""}`;
+  box.querySelector("[data-ml]")?.addEventListener("click", async (e) => {
+    const acao = e.target.dataset.ml;
+    e.target.disabled = true;
+    const { data: r, error: er } = await sb.functions.invoke("casorio-ml", { body: { acao } });
+    if (er || r?.erro) { toast(r?.erro || "Erro ao falar com o Mercado Livre"); e.target.disabled = false; return; }
+    if (acao === "iniciar" && r.url) { location.href = r.url; return; }
+    toast("Mercado Livre desconectado"); caixaML(box);
   });
 }
 
