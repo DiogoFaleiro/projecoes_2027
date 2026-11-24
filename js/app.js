@@ -110,7 +110,15 @@ function img(url, fallback) {
 })();
 
 // ===== PWA =====
-if ("serviceWorker" in navigator) navigator.serviceWorker.register("./sw.js").catch(console.error);
+if ("serviceWorker" in navigator) {
+  navigator.serviceWorker.register("./sw.js", { updateViaCache: "none" }).then((r) => r.update()).catch(console.error);
+  // Quando sair versão nova do app, recarrega uma vez sozinho (só se não houver formulário aberto)
+  let recarregou = false;
+  navigator.serviceWorker.addEventListener("controllerchange", () => {
+    if (recarregou || document.querySelector(".sheet-bg")) return;
+    recarregou = true; location.reload();
+  });
+}
 window.addEventListener("beforeinstallprompt", (e) => { e.preventDefault(); S.installPrompt = e; if (S.user && S.aba === "painel") render(); });
 window.addEventListener("appinstalled", () => { S.installPrompt = null; toast("App instalado! 💜"); render(); });
 const instalado = () => matchMedia("(display-mode: standalone)").matches || navigator.standalone;
@@ -481,16 +489,56 @@ function vConvidados() {
 }
 
 // ===== Formulários (sheet) =====
+// ===== Telas que sobem (sheet): fecham com ✕, toque fora, arrastar para baixo ou botão Voltar do Android =====
 function abrirSheet(html, aoMontar) {
-  fecharSheet();
+  $("#sheet-root").innerHTML = "";
   const bg = document.createElement("div");
   bg.className = "sheet-bg";
-  bg.innerHTML = `<div class="sheet"><div class="pega"></div>${html}</div>`;
-  bg.addEventListener("click", (e) => { if (e.target === bg) fecharSheet(); });
+  bg.innerHTML = `<div class="sheet"><div class="pega" aria-hidden="true"></div><button type="button" class="sheet-x" data-fechar aria-label="Fechar">✕</button>${html}</div>`;
+  bg.addEventListener("click", (e) => { if (e.target === bg || e.target.closest("[data-fechar]")) fecharSheet(); });
   $("#sheet-root").appendChild(bg);
+  arrastarParaFechar(bg);
+  if (!history.state?.sheet) history.pushState({ ...(history.state || {}), sheet: 1 }, "");
   aoMontar?.(bg);
 }
-function fecharSheet() { $("#sheet-root").innerHTML = ""; render(); }
+function fecharSheetDom() { if (!$("#sheet-root").innerHTML) return; $("#sheet-root").innerHTML = ""; render(); }
+function fecharSheet() { if (history.state?.sheet) history.back(); else fecharSheetDom(); }
+window.addEventListener("popstate", () => { if ($(".sheet-bg")) fecharSheetDom(); });
+document.addEventListener("keydown", (e) => { if (e.key === "Escape" && $(".sheet-bg")) fecharSheet(); });
+
+function arrastarParaFechar(bg) {
+  const sh = bg.querySelector(".sheet");
+  let y0 = null, dy = 0, t0 = 0, arrastando = false;
+  sh.addEventListener("touchstart", (e) => {
+    y0 = null;
+    if (e.touches.length !== 1) return;
+    const naAlca = e.target.closest(".pega, h2");
+    if (!naAlca && (sh.scrollTop > 0 || e.target.closest("input, textarea, select"))) return;
+    y0 = e.touches[0].clientY; dy = 0; t0 = Date.now(); arrastando = false;
+  }, { passive: true });
+  sh.addEventListener("touchmove", (e) => {
+    if (y0 == null) return;
+    dy = e.touches[0].clientY - y0;
+    if (dy < 0 && !arrastando) { y0 = null; return; }
+    if (dy > 6) {
+      arrastando = true;
+      if (e.cancelable) e.preventDefault();
+      sh.style.transition = "none";
+      sh.style.transform = `translateY(${Math.max(0, dy)}px)`;
+      bg.style.background = `rgba(0,0,0,${Math.max(0.1, 0.6 - dy / 700).toFixed(2)})`;
+    }
+  }, { passive: false });
+  const soltar = () => {
+    if (y0 == null) return;
+    const vel = dy / Math.max(1, Date.now() - t0);
+    sh.style.transition = "transform .2s ease";
+    if (arrastando && (dy > 110 || vel > 0.6)) { sh.style.transform = "translateY(110%)"; setTimeout(fecharSheet, 170); }
+    else { sh.style.transform = ""; bg.style.background = ""; }
+    y0 = null; arrastando = false;
+  };
+  sh.addEventListener("touchend", soltar);
+  sh.addEventListener("touchcancel", soltar);
+}
 const opcoes = (nome, mapa, atual) => `<div class="opcoes" data-grupo="${nome}">${Object.entries(mapa).map(([k, v]) => `<button type="button" class="chip ${atual === k ? "on" : ""}" data-val="${k}">${Array.isArray(v) ? v[0] + " " + v[1] : v}</button>`).join("")}</div><input type="hidden" name="${nome}" value="${esc(atual)}">`;
 function ligarOpcoes(el) {
   el.querySelectorAll("[data-grupo]").forEach((g) => g.addEventListener("click", (e) => {
@@ -862,7 +910,7 @@ function formCalc() {
         e.target.disabled = true;
         const ok = await salvar("gastos", { categoria, titulo, previsto: Math.round(r.total * 100) / 100, notas: "[calculadora] estimativa automática — atualize ao fechar com fornecedor" }, existente?.id);
         e.target.disabled = false;
-        if (ok) { toast(existente ? "Estimativa atualizada nos gastos 💰" : "Lançado nos gastos 💰"); S.aba = "gastos"; location.hash = "gastos"; fecharSheet(); }
+        if (ok) { toast(existente ? "Estimativa atualizada nos gastos 💰" : "Lançado nos gastos 💰"); S.aba = "gastos"; history.replaceState(history.state, "", "#gastos"); fecharSheet(); }
       };
     };
     desenhar();
@@ -893,7 +941,7 @@ function escolherDestinoCompartilhado() {
     <div class="previa"><div class="foto">🔗</div><div><div class="t">${esc(titulo || url)}</div><div class="s">${esc(new URL(url).hostname)}</div></div></div>
     <div class="grade2"><button class="btn prim" data-para="moveis">🛋️ Móveis</button><button class="btn prim" data-para="destinos">✈️ Lua de mel</button></div>
   `, (el) => el.querySelectorAll("[data-para]").forEach((b) => b.onclick = () => {
-    const t = b.dataset.para; S.aba = t === "moveis" ? "moveis" : "lua"; location.hash = S.aba; formLink(t, { url });
+    const t = b.dataset.para; S.aba = t === "moveis" ? "moveis" : "lua"; history.replaceState(history.state, "", "#" + S.aba); formLink(t, { url });
   }));
 }
 

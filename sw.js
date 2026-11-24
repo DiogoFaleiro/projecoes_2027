@@ -1,5 +1,5 @@
 // Service worker do Mayedi: cache do app + notificações push
-const CACHE = "mayedi-v9";
+const CACHE = "mayedi-v10";
 const ARQUIVOS = ["./", "./index.html", "./css/app.css", "./js/app.js", "./manifest.webmanifest", "./icons/icon-192.png", "./icons/badge-96.png", "./img/diogo.jpg", "./img/may.jpg"];
 
 self.addEventListener("install", (e) => {
@@ -21,7 +21,7 @@ self.addEventListener("fetch", (e) => {
   if (!mesmoSite && !libs) return;
   // Rede primeiro para o app (sempre a versão mais nova), cache como reserva offline
   e.respondWith(
-    fetch(req).then((res) => {
+    fetch(mesmoSite ? new Request(req, { cache: "no-cache" }) : req).then((res) => {
       if (res.ok || res.type === "opaque") { const copia = res.clone(); caches.open(CACHE).then((c) => c.put(req, copia)); }
       return res;
     }).catch(() => caches.match(req, { ignoreSearch: req.mode === "navigate" }).then((r) => r || caches.match("./index.html")))
