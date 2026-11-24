@@ -64,6 +64,44 @@ const limparDescricao = (d: string | null, titulo: string | null) => {
   return x.length > 3 ? x : null;
 };
 
+// ===== Airbnb: dados no <script id="data-deferred-state-0"> =====
+function airbnb(html: string, url: URL) {
+  const bloco = html.match(/<script[^>]*id="data-deferred-state-0"[^>]*>([\s\S]*?)<\/script>/)?.[1];
+  if (!bloco) return null;
+  let raiz: any; try { raiz = JSON.parse(bloco); } catch { return null; }
+  let precoObj: any = null, resumo: string | null = null, htmlDesc: string | null = null, local: string | null = null, datas: string | null = null;
+  const pilha = [raiz]; let n = 0;
+  while (pilha.length && n++ < 400_000) {
+    const o = pilha.pop();
+    if (!o || typeof o !== "object") continue;
+    if (Array.isArray(o)) { for (let i = o.length - 1; i >= 0; i--) pilha.push(o[i]); continue; }
+    if (!precoObj && o.__typename === "StructuredDisplayPrice" && o.primaryLine?.price) precoObj = o;
+    if (!datas && typeof o.selectedDates === "string") datas = o.selectedDates;
+    if (!resumo && o.__typename === "DemandStayListingDescription") resumo = o.summary?.localizedString || null;
+    if (!htmlDesc && o.__typename === "Html" && typeof o.htmlText === "string" && o.htmlText.length > 150 && !/animais de serviço|assistance-animals/i.test(o.htmlText)) htmlDesc = o.htmlText;
+    if (!local && o.__typename === "StaysPdpLocation" && o.subtitle) local = o.subtitle;
+    for (const k in o) { const v = o[k]; if (v && typeof v === "object") pilha.push(v); }
+  }
+  const limpar = (h: string) => (decode(h.replace(/<br\s*\/?>/gi, " ¶ ").replace(/<[^>]+>/g, "")) || "").replace(/\s*¶\s*/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
+  const linhas = precoObj?.explanationData?.priceDetails || [];
+  const detalhe = linhas.flatMap((g: any) => (g.items || []).map((i: any) => i.description && i.priceString ? `${i.description} = ${i.priceString}` : null)).filter(Boolean);
+  const aviso = linhas.map((g: any) => g.content).filter(Boolean);
+  const total = /total/i.test(precoObj?.primaryLine?.qualifier || "");
+  const ci = url.searchParams.get("check_in"), co = url.searchParams.get("check_out");
+  const dias = ci && co ? Math.round((Date.parse(co) - Date.parse(ci)) / 864e5) || null : null;
+  const partes: string[] = [];
+  if (precoObj) partes.push(`💰 ${precoObj.primaryLine.qualifier ? precoObj.primaryLine.qualifier.replace(/:$/, "").replace(/^./, (c: string) => c.toUpperCase()) + ": " : ""}${precoObj.primaryLine.price}${datas ? " (" + datas + ")" : ""}${detalhe.length ? " · " + detalhe.join(" · ") : ""}`);
+  if (aviso.length) partes.push("ℹ️ " + aviso.join(" · "));
+  if (resumo) partes.push(resumo);
+  if (htmlDesc) partes.push(limpar(htmlDesc));
+  return {
+    preco: precoObj ? numero(precoObj.primaryLine.price) : null,
+    precoTotal: total,
+    descricao: partes.join("\n\n") || null,
+    local, dias,
+  };
+}
+
 // ===== API oficial do Mercado Livre =====
 const ehML = (h: string) => /(^|\.)(mercadoli[vb]re\.com(\.br)?|meli\.la)$/i.test(h);
 
@@ -256,13 +294,16 @@ function extrair(html: string, final: URL) {
   let imagem = m["og:image:secure_url"] || m["og:image"] || m["twitter:image"] || m["twitter:image:src"] || ld.imagem ||
     html.match(/<link[^>]+rel=["']image_src["'][^>]+href=["']([^"']+)/i)?.[1] || null;
   if (imagem) { try { imagem = new URL(decode(imagem)!, final).toString(); } catch { imagem = null; } }
-  const descBruta = decode(m["og:description"] || m["twitter:description"] || m["description"] || ld.descricao);
+  const metaDesc = decode(m["og:description"] || m["twitter:description"] || m["description"]);
+  const ldDesc = decode(ld.descricao);
+  const descBruta = (ldDesc && (!metaDesc || ldDesc.length > metaDesc.length)) ? ldDesc : metaDesc;
+  const ab = /(^|\.)airbnb\./i.test(final.hostname) ? airbnb(html, final) : null;
   const ml = /mercadoli[vb]re|meli\.la/i.test(final.hostname) ? mercadoLivre(html) : null;
   const tituloLimpo = limparTitulo(ml?.titulo || titulo);
-  const preco = ml?.preco ?? numero(m["product:price:amount"] || m["og:price:amount"] || m["price"] || m["product:sale_price:amount"]) ?? ld.preco ?? precoNoTexto(titulo) ?? precoNoTexto(descBruta) ?? null;
-  const descricao = (ml?.descricao || limparDescricao(descBruta, tituloLimpo))?.slice(0, 600) ?? null;
+  const preco = ml?.preco ?? ab?.preco ?? numero(m["product:price:amount"] || m["og:price:amount"] || m["price"] || m["product:sale_price:amount"]) ?? ld.preco ?? precoNoTexto(titulo) ?? precoNoTexto(descBruta) ?? null;
+  const descricao = ab?.descricao ? ab.descricao.slice(0, 2500) : (ml?.descricao || limparDescricao(descBruta, tituloLimpo))?.slice(0, 600) ?? null;
   const site = decode(m["og:site_name"]) || final.hostname.replace(/^www\./, "");
-  return { titulo: tituloLimpo, imagem, descricao, preco, site, url: final.toString() };
+  return { titulo: tituloLimpo, imagem, descricao, preco, site, url: final.toString(), local: ab?.local ?? null, dias: ab?.dias ?? null };
 }
 
 Deno.serve(async (req) => {
@@ -298,7 +339,7 @@ Deno.serve(async (req) => {
       melhor = {
         titulo: api.titulo || melhor?.titulo || null, imagem: api.imagem || melhor?.imagem || null,
         descricao: (api.descricao || melhor?.descricao || null)?.slice(0, 2000) ?? null,
-        preco: api.preco ?? melhor?.preco ?? null, site: "Mercado Livre", url: alvo.toString(),
+        preco: api.preco ?? melhor?.preco ?? null, site: "Mercado Livre", url: alvo.toString(), local: null, dias: null,
       };
     } else if (!melhor) {
       return json({ ok: false, ml: true, url: alvo.toString(), site: "Mercado Livre" });

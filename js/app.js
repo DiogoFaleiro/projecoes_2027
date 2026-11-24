@@ -564,6 +564,8 @@ function formLink(tabela, item = {}) {
           v("site").value = data.site || "";
           if (data.descricao && (!auto || !v("descricao").value)) v("descricao").value = data.descricao;
           if (data.preco && (!auto || !v(ehMovel ? "preco" : "custo").value)) v(ehMovel ? "preco" : "custo").value = fmtNum(data.preco);
+          if (!ehMovel && data.local && !v("local").value) v("local").value = data.local;
+          if (!ehMovel && data.dias && !v("dias").value) v("dias").value = data.dias;
           toast(data.preco ? "Informações encontradas ✨" : "Achei o produto, mas não o preço — preencha à mão");
         } else {
           v("site").value = data?.site || "";
