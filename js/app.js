@@ -511,7 +511,7 @@ function formLink(tabela, item = {}) {
   const ehMovel = tabela === "moveis";
   const novo = !item.id;
   const stMap = ehMovel ? ST_MOVEL : ST_DEST;
-  const comodoAtual = item.comodo || "Sala";
+  const comodoAtual = item.comodo || "";
   abrirSheet(`
     <h2>${novo ? (ehMovel ? "Novo móvel" : "Novo destino") : "Editar"}</h2>
     <label class="campo"><span>Link (opcional) — cole e toque em Buscar</span>
@@ -523,7 +523,10 @@ function formLink(tabela, item = {}) {
         <label class="campo"><span>Preço (unidade)</span><input class="inp" name="preco" inputmode="decimal" placeholder="0,00" value="${fmtNum(item.preco)}"></label>
         <label class="campo"><span>Quantidade</span><input class="inp" name="quantidade" type="number" min="1" value="${item.quantidade || 1}"></label>
       </div>
-      <label class="campo"><span>Cômodo</span><select class="inp" name="comodo">${[...new Set([...COMODOS, comodoAtual])].map((c) => `<option ${c === comodoAtual ? "selected" : ""}>${esc(c)}</option>`).join("")}</select></label>
+      <label class="campo" data-campo-comodo><span>Cômodo <b class="obrig">*</b></span><select class="inp" name="comodo">
+        <option value="" ${comodoAtual ? "" : "selected"} disabled>Escolha o cômodo…</option>
+        ${[...new Set([...COMODOS, ...(comodoAtual ? [comodoAtual] : [])])].map((c) => `<option value="${esc(c)}" ${c === comodoAtual ? "selected" : ""}>${esc(c)}</option>`).join("")}
+      </select><div class="erro-campo hidden">Escolha a qual cômodo este móvel pertence</div></label>
       <label class="campo"><span>Prioridade</span>${opcoes("prioridade", { alta: "🔥 Alta", media: "Média", baixa: "Baixa" }, item.prioridade || "media")}</label>
     ` : `
       <label class="campo"><span>Local</span><input class="inp" name="local" value="${esc(item.local)}" placeholder="Cidade, estado ou país"></label>
@@ -576,10 +579,18 @@ function formLink(tabela, item = {}) {
       b.disabled = false; b.textContent = "Buscar";
     };
     el.querySelector("[data-buscar]").onclick = () => buscar();
+    v("comodo")?.addEventListener("change", () => { const c = el.querySelector("[data-campo-comodo]"); c.classList.remove("invalido"); c.querySelector(".erro-campo").classList.add("hidden"); });
     v("url").addEventListener("paste", () => setTimeout(buscar, 50));
     el.querySelector("[data-salvar]").onclick = async (e) => {
       const titulo = v("titulo").value.trim();
       if (!titulo) return toast("Dê um nome");
+      if (ehMovel && !v("comodo").value) {
+        const campo = el.querySelector("[data-campo-comodo]");
+        campo.classList.add("invalido"); campo.querySelector(".erro-campo").classList.remove("hidden");
+        campo.scrollIntoView({ behavior: "smooth", block: "center" });
+        setTimeout(() => { v("comodo").focus(); try { v("comodo").showPicker?.(); } catch {} }, 350);
+        return toast("Escolha o cômodo antes de salvar");
+      }
       const dados = {
         titulo, url: urlOk(v("url").value.trim()), imagem: urlOk(v("imagem").value) , site: v("site").value || null,
         descricao: v("descricao").value.trim() || null, notas: v("notas").value.trim() || null, status: v("status").value,
